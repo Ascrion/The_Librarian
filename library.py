@@ -4,6 +4,7 @@ import json
 import datetime as dt
 import csv
 from decimal import Decimal
+import os
 
 import psycopg2
 
@@ -12,11 +13,11 @@ import psycopg2
 def sql_controller(table, command, t_data, settings):
     """Used to Control the SQL Database"""
     with psycopg2.connect(
-        dbname="library",
-        user="postgres",
-        password="postgress",
-        host="localhost",
-        port="5432",
+        dbname = settings['dbname'],
+        user= settings['user'],
+        password= settings['password'],
+        host= settings['host'],
+        port= settings['port'],
     ) as conn:
         with conn.cursor() as cur:
 
@@ -54,7 +55,7 @@ def sql_controller(table, command, t_data, settings):
                         book_id INT REFERENCES books(id) ON DELETE CASCADE,
                         user_id INT REFERENCES users(id) ON DELETE CASCADE,
                         Issue_Date DATE NOT NULL,
-                        Return_Date DATE,
+                        Due_Date DATE,
                         Actual_Return_Date DATE,
                         Transaction TEXT NOT NULL
                         );"""
@@ -104,14 +105,14 @@ def sql_controller(table, command, t_data, settings):
                                     result[0][4] == None or abs(result[0][4]) == 0
                                 ) and (result[0][3] == None or len(result[0][3]) == 0):
                                     cur.execute(
-                                        f"DELETE FROM users WHERE Contact = ({data['Contact']})"
+                                        f"DELETE FROM users WHERE Contact = %s",(data['Contact'],)
                                     )
                                     return f"{data['User_Name']} Deleted"
                                 else:
                                     return f"{data['User_Name']} has active fines / not returned books, cannot delete"
                             else:
                                 cur.execute(
-                                    f"DELETE FROM users WHERE Contact = ({data['Contact']})"
+                                    f"DELETE FROM users WHERE Contact = %s",(data['Contact'],)
                                 )
                                 return f"{data['User_Name']} Deleted"
                     case 4:  # Read
@@ -142,7 +143,7 @@ def sql_controller(table, command, t_data, settings):
                                     )
                                 )
                                 updated_fine = max(prev_fine - x, 0)
-                                cur.execute(f"UPDATE users SET Fines = {updated_fine} WHERE id = {result[0][0]}")
+                                cur.execute(f"UPDATE users SET Fines = %s WHERE id = %s",(updated_fine,result[0][0]),)
                                 return f"{result[0][1]} has paid off {x}, leaving {updated_fine} in fines."
 
                     case _:  # Default case
@@ -194,11 +195,11 @@ def sql_controller(table, command, t_data, settings):
                                 print(
                                     "Error! Too many deletions, Choose option to delete all Books"
                                 )
+                                return f"{data['Book_Name']} updated"
                             else:
                                 cur.execute(
-                                    f"UPDATE books SET Copies = {new_Copies}, Available = {new_Available} WHERE id = {result[0][3]}"
+                                    f"UPDATE books SET Copies = %s, Available = %s WHERE id =%s ",(new_Copies,new_Available,result[0][3]),
                                 )
-                            return f"{data['Book_Name']} updated"
 
                     case 2:  # Delete
                         if result == []:
@@ -207,14 +208,14 @@ def sql_controller(table, command, t_data, settings):
                             if not test:
                                 if result[0][5] is None or len(result[0][5]) == 0:
                                     cur.execute(
-                                        f"DELETE FROM books WHERE id = {result[0][3]}"
+                                        f"DELETE FROM books WHERE id = %s",(result[0][3],)
                                     )
                                     return f"All Copies of {data['Book_Name']} Deleted"
                                 else:
                                     return "Some users still have the book, hence it cannot be deleted"
                             else:
                                 cur.execute(
-                                    f"DELETE FROM books WHERE id = {result[0][3]}"
+                                    f"DELETE FROM books WHERE id = %s",(result[0][3],)
                                 )
                                 return f"All Copies of {data['Book_Name']} Deleted"
                     case 3:  # Read
@@ -251,11 +252,11 @@ def sql_controller(table, command, t_data, settings):
                         rows2 = cur.fetchone()
 
                         borrow_date = dt.date.today()
-                        return_date = borrow_date + dt.timedelta(
+                        due_date = borrow_date + dt.timedelta(
                             days=settings["Issue_Duration"]
                         )
                         borrow_str = borrow_date.strftime("%Y-%m-%d")
-                        return_str = return_date.strftime("%Y-%m-%d")
+                        return_str = due_date.strftime("%Y-%m-%d")
 
                         transaction = "Issue"
 
@@ -284,7 +285,7 @@ def sql_controller(table, command, t_data, settings):
 
                         cur.execute(
                             "INSERT INTO transactions "
-                            "(book_id, user_id,Issue_Date,Return_Date,Transaction)"
+                            "(book_id, user_id,Issue_Date,Due_Date,Transaction)"
                             " VALUES (%s, %s,%s,%s,%s)",
                             (rows1[0], rows2[0], borrow_str, return_str, transaction),
                         )
@@ -360,12 +361,12 @@ def sql_controller(table, command, t_data, settings):
 
                         # Fine Calculations
                         cur.execute(
-                            f"SELECT Return_Date FROM transactions WHERE book_id = {rows1[0]} and user_id = {rows2[0]}"
+                            f"SELECT Due_Date FROM transactions WHERE book_id = %s and user_id = %s",(rows1[0],rows2[0])
                         )
                         rows3 = cur.fetchone()
 
-                        borrowed_date = rows3[0]
-                        days_late = max((dt.date.today() - borrowed_date).days, 0)
+                        issue_date = rows3[0]
+                        days_late = max((dt.date.today() - issue_date).days, 0)
                         fine = Decimal(str(days_late)) * Decimal(
                             str(settings["Fines_Per_Day"])
                         )
@@ -377,7 +378,7 @@ def sql_controller(table, command, t_data, settings):
                         new_fine = prev_fine + fine
 
                         cur.execute(
-                            f"UPDATE users SET Fines = {new_fine} WHERE id = {rows2[0]}"
+                            f"UPDATE users SET Fines = %s WHERE id = %s",(new_fine,rows2[0],),
                         )
                         return f"{data['Book_Name']} has been returned by {rows2[1]} with fine of {fine}"
 
@@ -446,11 +447,11 @@ while __name__ == "__main__":
 
         case 4:  # Settings Management
             with psycopg2.connect(
-                dbname="library",
-                user="postgres",
-                password="postgress",
-                host="localhost",
-                port="5432",
+                dbname = settings['dbname'],
+                user= settings['user'],
+                password= settings['password'],
+                host= settings['host'],
+                port= settings['port'],
             ) as conn:
                 with conn.cursor() as cur:
 
@@ -500,7 +501,7 @@ while __name__ == "__main__":
                                 # Enter new details
                                 Librarian_Name = input("Enter your name: ")
                                 Issue_Duration = int(input("Enter issue duration: "))
-                                Fines_Per_Day = int(input("Enter Fines Per Day: "))
+                                Fines_Per_Day = float(input("Enter Fines Per Day: "))
                                 Max_Issues_Per_User = int(
                                     input("Enter Max Book Issues Per User: ")
                                 )
@@ -542,14 +543,18 @@ while __name__ == "__main__":
 
         case 5:  # Export to CSV
             conn = psycopg2.connect(
-                dbname="library",
-                user="postgres",
-                password="postgress",
-                host="localhost",
-                port="5432",
+                dbname = settings['dbname'],
+                user= settings['user'],
+                password= settings['password'],
+                host= settings['host'],
+                port= settings['port'],
             )
 
             tables = ["users", "books", "transactions"]
+
+            # Create data folder to host CSV files
+            if not os.path.isdir("data"):
+                os.mkdir("data")
 
             for table in tables:
                 with conn.cursor() as cur:
@@ -557,6 +562,7 @@ while __name__ == "__main__":
                     rows = cur.fetchall()
                     colnames = [desc[0] for desc in cur.description]
 
+                         
                     with open(f"./data/{table}.csv", "w", newline="") as f:
                         writer = csv.writer(f)
                         writer.writerow(colnames)
